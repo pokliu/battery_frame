@@ -44,7 +44,7 @@ P = {
     "body_len": 140.5,         # 电芯腔长（主体长度）
     # --- 端盖 ---
     "end_hole_d": 24.0,        # 点焊开孔
-    "plate_t": 1.5,            # 挡板厚
+    "plate_t": 2.5,            # 挡板厚（FEA：1.5 在 5 g 轴向冲击下主拉应力 38 MPa，不够；2.5 + 15 颗螺丝约 16 MPa）
     "rim_w": 5.0,              # 外周凸台宽
     "boss_d": 10.0,            # 螺丝加厚凸台直径
     "boss_t": 4.5,             # 螺丝处总厚（自贴合面起）
@@ -62,6 +62,8 @@ P = {
         ("star", 1, 1), ("star", 3, 1), ("star", 1, 3), ("star", 3, 3),
         ("bottom", 0), ("bottom", 4), ("left", 2), ("right", 2),
         ("toplow", 1), ("toptop", 4),
+        # FEA 后加的 5 颗：缩短端盖无支撑跨度。避开换层 2×2 镍片中心
+        ("star", 2, 0), ("star", 2, 3), ("star", 0, 2), ("star", 4, 1), ("star", 4, 3),
     ),
     # --- 减重/通风孔 ---
     "lighten": True, "lighten_d": 8.0,
@@ -250,6 +252,12 @@ def nickel_rects(conn_cells):
             if a < b and abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1:
                 (x1, y1), (x2, y2) = cc(*a), cc(*b)
                 rs.append((min(x1, x2) - w, max(x1, x2) + w, min(y1, y2) - w, max(y1, y2) + w))
+    # 换层的 2×2 连接常用整块方形镍片，中心也按覆盖处理
+    if len(conn_cells) == 4:
+        xs = [cc(*c)[0] for c in conn_cells]
+        ys = [cc(*c)[1] for c in conn_cells]
+        if max(xs) - min(xs) == P["pitch"] and max(ys) - min(ys) == P["pitch"]:
+            rs.append((min(xs), max(xs), min(ys), max(ys)))
     return rs
 
 
