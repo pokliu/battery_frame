@@ -104,8 +104,10 @@ P = {
     "slots_low": ((4.5, 12.5), (88.0, 110.0)),
     "slots_high": ((204.0, 213.5),),
     "tab_slot_clear": 1.0,     # 引出片槽每边比引出片宽出
-    # 外周凸台菱形通风窗（45° 自支撑），0 = 不开
-    "rim_win_h": 0.0,
+    # 外周凸台菱形通风窗（45° 自支撑，半对角线 h），(端盖A, 端盖B)，0 = 不开。
+    # 窗在凸台高度中间，上下各留 rim_win_margin：A 内空间 3.6 → h 1.2（2.4 菱形），B 内空间 6.2 → h 2.5（5 菱形）
+    "rim_win_h": (1.2, 2.5),
+    "rim_win_margin": 0.6,     # 窗到底板内表面、到挡边的最少实料
     # --- 正负极引出：端子片（铜+镍）向上延伸出端盖顶边槽，在支架顶面以上锡焊 12AWG ---
     "main_wire_d": 4.5,
     "tab_w": 20.0, "tab_above": 22.0,     # 引出片宽、伸出顶面高度
@@ -490,7 +492,7 @@ def make_cap(end):
         tools.append(box(a, b, d["H5"] - rw - 1, d["H5"] + 1, pin, -lip + 1))
     for a, b in hi:
         tools.append(box(a, b, d["HT"] - rw - 1, d["HT"] + 1, pin, -lip + 1))
-    tools += rim_windows(pin)
+    tools += rim_windows(pin, end)
     cap = cap.cut(tools).removeSplitter()
     return mirror_z(cap) if end == "B" else cap
 
@@ -535,10 +537,14 @@ def bolt_geom():
                 engage=min(bolt_end, ins_out) - ins_in, tip_below_face=d["zB"] - bolt_end)
 
 
-def rim_window_positions():
+def rim_win_h(end):
+    return P["rim_win_h"][0 if end == "A" else 1]
+
+
+def rim_window_positions(end="A"):
     """返回 [(方向, 边坐标, 沿边位置列表)]。方向 'y'：穿 Y 向墙（顶边）；'x'：穿 X 向墙（左右侧）。"""
     d = D()
-    h = P["rim_win_h"]
+    h = rim_win_h(end)
     if h <= 0:
         return []
     gap, margin = 6.0, 8.0
@@ -554,12 +560,12 @@ def rim_window_positions():
             ("x", d["W"], free(0, d["HT"], ()))]
 
 
-def rim_windows(pin=None):
+def rim_windows(pin=None, end="A"):
     d = D()
-    h, rw = P["rim_win_h"], P["rim_w"]
+    h, rw = rim_win_h(end), P["rim_w"]
     zc = ((d["plate_in"] if pin is None else pin) + (-d["lip"])) / 2
     out = []
-    for kind, e, ps in rim_window_positions():
+    for kind, e, ps in rim_window_positions(end):
         for p in ps:
             if kind == "y":
                 pts = [V(p - h, 0, zc), V(p, 0, zc - h), V(p + h, 0, zc), V(p, 0, zc + h), V(p - h, 0, zc)]
@@ -588,8 +594,7 @@ def make_frame():
     left = box(0, t, H5, YT, z0, z1)
     right = box(W - t, W, HT, YT, z0, z1)
     ring = box(0, W, yR, YT, z0, z1).cut(box(rw, W - rw, yR - 1, YT + 1, z0 + rw, z1 - rw))
-    bar = box(0, W, yR, YT, zm - P["frame_bar_w"] / 2, zm + P["frame_bar_w"] / 2)
-    frame = front.fuse([back, left, right, ring, bar])
+    frame = front.fuse([back, left, right, ring] + frame_bars())
     h = P["frame_dia"]
     yU = (HT + yR) / 2
     yLo = (H5 + HT) / 2
@@ -609,6 +614,30 @@ def make_frame():
     wins += [dx(zc, yU, W + 1) for zc in zs]
     wins += [dx(zc, yLo, t + 1) for zc in zs]
     return frame.cut(wins + boss_pin_holes()).removeSplitter()
+
+
+def frame_bars(grow=0.0):
+    """压框顶环的两条对角支撑条（X 形，角到角），宽 frame_bar_w（+2×grow），装配坐标。
+    原来是沿 X 的正中一条，用户要在正中线上打孔，改成对角。"""
+    d = D()
+    W, z0, z1 = d["W"], d["zA"], d["zB"]
+    YT = d["YT"]
+    yR = YT - P["frame_ring_t"]
+    hw = P["frame_bar_w"] / 2 + grow
+    out = []
+    for (xa, za), (xb, zb) in (((0.0, z0), (W, z1)), ((0.0, z1), (W, z0))):
+        L = math.hypot(xb - xa, zb - za)
+        ux, uz = (xb - xa) / L, (zb - za) / L
+        nx, nz = -uz * hw, ux * hw
+        e = 20.0                                 # 两头多伸出，再和外框求交
+        pa = (xa - ux * e, za - uz * e)
+        pb = (xb + ux * e, zb + uz * e)
+        pts = [V(pa[0] + nx, yR - grow, pa[1] + nz), V(pb[0] + nx, yR - grow, pb[1] + nz),
+               V(pb[0] - nx, yR - grow, pb[1] - nz), V(pa[0] - nx, yR - grow, pa[1] - nz)]
+        f = Part.Face(Part.makePolygon(pts + [pts[0]]))
+        bar = f.extrude(V(0, YT - yR + 2 * grow, 0)).common(box(0, W, yR - grow, YT + grow, z0, z1))
+        out.append(bar)
+    return out
 
 
 def boss_specs():
@@ -763,8 +792,10 @@ def main_wire_solids():
     out = box(100.0, d["W"] - P["frame_ring_w"] - 0.5, HT + 0.5, YT,
               zo + P["frame_ring_w"] + 0.5, zi)
     m = mirror_z
+    # 出线区让开压框对角支撑条（线从支撑条旁边的开口上去）
+    outlet = m(out).cut(frame_bars(grow=0.5))
     return dict(tab_m=m(tab_m), tab_p=m(tab_p), joint_m=m(joint_m), joint_p=m(joint_p),
-                route_m=m(route_m), route_p=m(route_p), outlet=m(out))
+                route_m=m(route_m), route_p=m(route_p), outlet=outlet)
 
 
 def wire_zones():
@@ -1089,7 +1120,13 @@ def checks(o):
                               tuple(round(v, 1) for v in (mws["outlet"].BoundBox.ZMin, mws["outlet"].BoundBox.ZMax)))
     R["端盖内空间高 A/B(连接片+青稞纸+采样线)"] = (round(d["capA_t"] - P["cap_plate_t"], 2),
                                           round(d["capB_t"] - P["cap_plate_t"], 2))
-    R["边框通风窗数"] = sum(len(p) for _, _, p in rim_window_positions())
+    R["边框通风窗数 A/B"] = tuple(sum(len(p) for _, _, p in rim_window_positions(e)) for e in ("A", "B"))
+    R["通风窗菱形高 A/B"] = (2 * rim_win_h("A"), 2 * rim_win_h("B"))
+    R["通风窗到底板/挡边余量 A/B"] = tuple(round(((d["capA_t"] if e == "A" else d["capB_t"]) - P["cap_plate_t"]) / 2
+                                          - rim_win_h(e), 2) for e in ("A", "B"))
+    R["通风窗余量OK"] = all(v >= P["rim_win_margin"] - 1e-9 for v in R["通风窗到底板/挡边余量 A/B"])
+    R["出线区面积(让开支撑条后, 顶环开口内) mm2"] = round(mws["outlet"].common(
+        box(0, d["W"], d["YT"] - 0.2, d["YT"], d["zA"], d["zB"])).Volume / 0.2)
     # --- BMS ---
     bms = o["bms"]
     R["BMS∩座/端盖/电芯"] = round(vol_common(bms, seatA) + vol_common(bms, seatB) + vol_common(bms, capA)
